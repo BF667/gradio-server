@@ -22,7 +22,6 @@ Run (after cloning and installing):
 
 import os
 
-import gradio as gr
 from gradio import Server
 
 # ── In-memory task store (replace with a real DB in production) ──

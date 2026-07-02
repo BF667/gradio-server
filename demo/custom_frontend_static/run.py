@@ -12,32 +12,31 @@ Run (after cloning and installing):
 
 import os
 
-import gradio as gr
+from gradio import Server
+
+server = Server(
+    title="Static Frontend Demo",
+    description="Gradio as a pure backend API server with a custom static frontend",
+)
 
 
+@server.api(name="reverse")
 def reverse(text: str) -> str:
     """Simple API: reverse the input text."""
     return text[::-1]
 
 
+@server.api(name="echo")
 def echo(message: str) -> str:
     """Simple API: echo the message back."""
     return f"Echo: {message}"
 
 
-# Build a minimal Blocks with only API endpoints (no visible UI).
-# gr.api() registers functions that derive their types from type hints
-# and are callable via /gradio_api/call/<name>.
-with gr.Blocks() as demo:
-    gr.api(reverse, api_name="reverse")
-    gr.api(echo, api_name="echo")
-
-
 if __name__ == "__main__":
     frontend_dir = os.path.join(os.path.dirname(__file__))
-    demo.launch(
+    server.launch(
         custom_frontend=frontend_dir,
         server_name="0.0.0.0",
         server_port=7860,
-        _frontend=False,  # don't open browser iframe
+        _frontend=False,
     )

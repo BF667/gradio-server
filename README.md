@@ -45,31 +45,20 @@ Open **http://localhost:7860** — you'll see your custom frontend, not the Grad
 
 ---
 
-## Two Ways to Use Gradio as a Backend
+## What's Different from Upstream Gradio
 
-### 1. `gr.Blocks` + `gr.api()` — Minimal API Server
+This fork strips out all **Gradio UI components** (Textbox, Button, Image, Chatbot, Layouts, Templates, ChatInterface, Interface, etc.). The package only exports server-mode essentials:
 
-Register Python functions as API endpoints using `gr.api()`. They derive input/output types from type hints — no Gradio UI components needed.
+- **`Server`** — FastAPI-based backend with `@server.api()` decorator
+- **`Blocks`** — Minimal container (for advanced use with `gr.api()`)
+- **`api` / `on`** — Event registration functions
+- **Core internals** — routes, queueing, data classes, i18n, themes, utils
 
-```python
-import gradio as gr
+No UI components are exported. No Gradio UI template is served when `custom_frontend` is set.
 
-def reverse(text: str) -> str:
-    return text[::-1]
+---
 
-def echo(message: str) -> str:
-    return f"Echo: {message}"
-
-with gr.Blocks() as demo:
-    gr.api(reverse, api_name="reverse")
-    gr.api(echo, api_name="echo")
-
-demo.launch(custom_frontend="./my-website/")
-```
-
-This serves your static files from `./my-website/` at `/`, while the Gradio API is available at `/gradio_api/call/reverse` and `/gradio_api/call/echo`.
-
-### 2. `Server()` — Full Backend with Custom REST + Gradio API
+## Usage: Server() as Your Backend
 
 `Server` inherits from FastAPI, giving you full control over routes while also supporting Gradio-powered API endpoints.
 
@@ -184,7 +173,7 @@ python demo/custom_frontend_static/run.py
 ```
 
 **What it shows:**
-- `gr.Blocks()` with `gr.api()` — API-only, zero UI components
+- `Server()` with `@server.api()` — zero UI components, pure API
 - Static files served directly from the demo directory
 - Dark-themed UI with "Reverse Text" and "Echo Message" cards
 
@@ -217,7 +206,7 @@ gradio-server/
 │   └── ...
 ├── demo/
 │   ├── custom_frontend_static/
-│   │   ├── run.py         # Backend: gr.Blocks() + gr.api()
+│   │   ├── run.py         # Backend: Server() + @server.api()
 │   │   └── index.html     # Frontend: plain HTML/CSS/JS
 │   └── custom_frontend_fullstack/
 │       ├── run.py         # Backend: Server() + FastAPI routes + @server.api()
