@@ -156,6 +156,71 @@ You can build very custom and complex applications using `gr.Blocks()`. For exam
 
 Gradio includes another high-level class, `gr.ChatInterface`, which is specifically designed to create Chatbot UIs. Similar to `Interface`, you supply a function and Gradio creates a fully working Chatbot UI. If you're interested in creating a chatbot, you can jump straight to [our dedicated guide on `gr.ChatInterface`](https://www.gradio.app/guides/creating-a-chatbot-fast).
 
+#### Server mode (`gradio.Server`): Gradio as a Backend API
+
+Server mode lets you use Gradio as a **pure backend API engine** while you build the frontend with whatever technology you want — plain HTML, React, Vue, Svelte, Next.js, or any other framework.
+
+`gradio.Server` inherits from FastAPI, so you get:
+- **Custom REST routes** via standard `@server.get()`, `@server.post()`, etc.
+- **Gradio-powered endpoints** via `@server.api()` — with queue, SSE streaming, file uploads, and concurrency control built in.
+- **Custom frontend hosting** via the `custom_frontend` parameter — serve your own static web app at `/` instead of the Gradio UI.
+
+**Quick example — static HTML frontend with Gradio backend:**
+
+```python
+import gradio as gr
+
+def reverse(text: str) -> str:
+    return text[::-1]
+
+with gr.Blocks() as demo:
+    gr.api(reverse, api_name="reverse")
+
+demo.launch(custom_frontend="./my-website/")
+```
+
+This serves the files in `./my-website/` (index.html, CSS, JS) at the root `/`, while the Gradio API remains available at `/gradio_api/call/reverse`. Your HTML/JS calls the Gradio API directly using fetch and Server-Sent Events.
+
+**Fullstack example — Server mode with custom REST + Gradio API + SPA:**
+
+```python
+from gradio import Server
+from fastapi import HTTPException
+from pydantic import BaseModel
+
+server = Server(title="My App", docs_url="/docs")
+
+# Standard FastAPI routes for your own REST API
+@server.get("/api/tasks")
+def list_tasks():
+    return [{"id": 1, "title": "Learn Gradio", "done": False}]
+
+# Gradio-powered endpoint (queue + SSE streaming)
+@server.api(name="chat")
+def ai_chat(message: str) -> str:
+    return f"You said: {message}"
+
+# Launch with your own frontend build
+server.launch(
+    custom_frontend="./frontend-dist/",
+    spa=True,  # Enable client-side routing (React Router, etc.)
+)
+```
+
+When `spa=True`, any path that doesn't match a real file falls back to `index.html`, enabling client-side routers like React Router, Vue Router, or SvelteKit to work seamlessly.
+
+**Key parameters:**
+- `custom_frontend` (str | Path | None) — Path to a directory containing your web app. When set, these files are served at `/` instead of the Gradio UI.
+- `spa` (bool) — When `True` with `custom_frontend`, unmatched paths serve `index.html` for single-page application routing.
+
+**What stays available with a custom frontend:**
+- All `/gradio_api/*` endpoints: queue, call, stream, upload, info, config
+- Custom FastAPI routes you added to the Server
+- `/docs` (OpenAPI docs) if enabled
+- File upload/download via the Gradio queue
+
+See `demo/custom_frontend_static/` and `demo/custom_frontend_fullstack/` for complete working examples.
+
 #### The Gradio Python & JavaScript Ecosystem
 
 That's the gist of the core `gradio` Python library, but Gradio is actually so much more! It's an entire ecosystem of Python and JavaScript libraries that let you build machine learning applications, or query them programmatically, in Python or JavaScript. Here are other related parts of the Gradio ecosystem:
@@ -163,7 +228,6 @@ That's the gist of the core `gradio` Python library, but Gradio is actually so m
 * [Gradio Python Client](https://www.gradio.app/guides/getting-started-with-the-python-client) (`gradio_client`): query any Gradio app programmatically in Python.
 * [Gradio JavaScript Client](https://www.gradio.app/guides/getting-started-with-the-js-client) (`@gradio/client`): query any Gradio app programmatically in JavaScript.
 * [Hugging Face Spaces](https://huggingface.co/spaces): the most popular place to host Gradio applications — for free!
-* [Server mode](https://www.gradio.app/guides/server-mode) (`gradio.Server`): build a custom frontend with Gradio's backend — queue, streaming, MCP, ZeroGPU, and Spaces hosting included.
 
 ### What's Next?
 

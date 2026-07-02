@@ -270,10 +270,23 @@ class Server(App):
         head: str | None = None,
         head_paths: str | Path | Sequence[str | Path] | None = None,
         num_workers: int | None = None,
+        custom_frontend: str | Path | None = None,
+        spa: bool = False,
     ) -> tuple[App, str, str]:
         """Launch the Gradio API server (Server mode).
 
         Parameters match ``Blocks.launch()``; see that method for full descriptions.
+
+        Additional parameters:
+            custom_frontend: Path to a directory containing a custom web app
+                (index.html, JS bundles, CSS, images, etc.) to serve at the
+                root ``/`` instead of the default Gradio UI.  All Gradio API
+                endpoints (``/gradio_api/*``) remain fully operational so your
+                custom frontend can call predict, upload, stream, etc.
+            spa: When ``custom_frontend`` is set and this is ``True``, any
+                path that does not match a real file falls back to serving
+                ``index.html`` — enabling client-side routers (React Router,
+                Vue Router, etc.).
 
         Returns:
             Tuple of (fastapi_app, local_url, share_url).
@@ -335,4 +348,6 @@ class Server(App):
             head=head,
             head_paths=head_paths,
             num_workers=num_workers,
+            custom_frontend=custom_frontend,
+            spa=spa,
         )

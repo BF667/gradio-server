@@ -254,6 +254,8 @@ class App(FastAPI):
         self._static_prefixes: tuple[
             str, ...
         ] = ()  # Populated by enable_static_workers
+        self.custom_frontend_dir: Path | None = None
+        self.custom_frontend_spa: bool = False
 
         # Allow user to manually set `docs_url` and `redoc_url`
         # when instantiating an App; when they're not set, disable docs and redoc.
@@ -363,6 +365,8 @@ class App(FastAPI):
         strict_cors: bool = True,
         mcp_server: bool | None = None,
         debug: bool = False,
+        custom_frontend: str | Path | None = None,
+        spa: bool = False,
     ) -> App:
         app_kwargs = app_kwargs or {}
         app_kwargs.setdefault("default_response_class", ORJSONResponse)
@@ -383,6 +387,36 @@ class App(FastAPI):
         router = APIRouter(prefix=API_PREFIX)
 
         app.configure_app(blocks)
+
+        # ── Custom Frontend Support ──────────────────────────────────────
+        # When custom_frontend is set, the user wants to serve their own
+        # static web app (HTML/JS/CSS) at the root "/" instead of the
+        # default Gradio UI template.  All Gradio API endpoints under
+        # /gradio_api/ remain fully functional so the custom frontend
+        # can call predict, upload, stream, etc.
+        #
+        # This enables two main use-cases:
+        #   1. Static web app client  – plain HTML/CSS/JS that talks to
+        #      Gradio's backend API (queue, SSE, file upload …).
+        #   2. Fullstack app client   – a React / Vue / Svelte / Next.js
+        #      build whose assets are served here, with Gradio providing
+        #      the API layer (including queueing & streaming).
+        #
+        # The `spa` flag enables Single-Page-Application fallback: any
+        # path that does not match a real file is served with index.html
+        # so client-side routers (react-router, vue-router, etc.) work.
+        # ────────────────────────────────────────────────────────────────
+        _custom_frontend_dir: Path | None = None
+        if custom_frontend is not None:
+            _custom_frontend_dir = Path(custom_frontend).resolve()
+            if not _custom_frontend_dir.is_dir():
+                raise ValueError(
+                    f"custom_frontend path does not exist or is not a directory: "
+                    f"{_custom_frontend_dir}"
+                )
+            # Store reference on the app so other code can inspect it
+            app.custom_frontend_dir = _custom_frontend_dir
+            app.custom_frontend_spa = spa
 
         app.add_middleware(CustomCORSMiddleware, strict_cors=strict_cors)  # type: ignore
         app.add_middleware(
@@ -552,144 +586,216 @@ class App(FastAPI):
             svelte_path = DeveloperPath(str(Path(BUILD_PATH_LIB) / "svelte"))
             return file_response(svelte_path, UserProvidedPath(path))
 
-        def attach_page(page):
-            @app.get(f"/{page}", response_class=HTMLResponse)
-            def page_route(
+        # ── Custom Frontend: static file serving + optional SPA fallback ──
+        if _custom_frontend_dir is not None:
+            from starlette.staticfiles import StaticFiles
+
+            # Serve every file under the custom directory via a catch-all
+            # so that JS bundles, images, CSS, etc. are all accessible.
+            app.mount("/__custom__", StaticFiles(directory=str(_custom_frontend_dir)), name="custom_frontend_assets")
+
+            @app.head("/", response_class=HTMLResponse)
+            @app.get("/", response_class=HTMLResponse)
+            async def custom_main_index(request: fastapi.Request):
+                """Serve the custom index.html at root."""
+                index_file = _custom_frontend_dir / "index.html"
+                if not index_file.exists():
+                    raise HTTPException(status_code=404, detail="index.html not found in custom_frontend directory")
+                return HTMLResponse(
+                    content=index_file.read_bytes(),
+                    status_code=200,
+                )
+
+            @app.head("/{path:path}", response_class=HTMLResponse)
+            @app.get("/{path:path}", response_class=HTMLResponse)
+            async def custom_frontend_catchall(
+                request: fastapi.Request,
+                path: str,
+            ):
+                """Serve a static file, or fall back to index.html for SPA routing.
+
+                Only paths that are NOT internal Gradio routes are handled here.
+                """
+                # Never intercept internal Gradio routes or user-defined
+                # API routes that were registered before launch().
+                first_segment = path.split("/")[0]
+                if first_segment in INTERNAL_ROUTES or first_segment == API_PREFIX.strip("/"):
+                    raise HTTPException(status_code=404)
+
+                # Also skip common user API prefixes that may have been
+                # registered directly on the Server (FastAPI) instance
+                # before launch().  Starlette's route ordering handles
+                # this, but we add an explicit guard for safety.
+                if first_segment in ("api", "docs", "redoc", "openapi"):
+                    raise HTTPException(status_code=404)
+
+                # Try to serve the exact file from the custom frontend dir
+                requested_file = (_custom_frontend_dir / path).resolve()
+                # Security: ensure the resolved path is still inside the dir
+                try:
+                    requested_file.relative_to(_custom_frontend_dir)
+                except ValueError:
+                    raise HTTPException(status_code=403, detail="Access denied")
+
+                if requested_file.is_file():
+                    content_type, _ = mimetypes.guess_type(str(requested_file))
+                    return Response(
+                        content=requested_file.read_bytes(),
+                        media_type=content_type or "application/octet-stream",
+                    )
+
+                # SPA fallback: serve index.html for client-side routing
+                if spa:
+                    index_file = _custom_frontend_dir / "index.html"
+                    if index_file.exists():
+                        return HTMLResponse(
+                            content=index_file.read_bytes(),
+                            status_code=200,
+                        )
+
+                raise HTTPException(status_code=404, detail="File not found")
+
+        # ── Default Gradio frontend (original behaviour) ──────────────────
+        else:
+
+            def attach_page(page):
+                @app.get(f"/{page}", response_class=HTMLResponse)
+                def page_route(
+                    request: fastapi.Request,
+                    user: str = Depends(get_current_user),
+                    deep_link: str = "",
+                ):
+                    return main(request, user, page, deep_link)
+
+                @app.get(f"/{page}/")
+                def page_redirect():
+                    return RedirectResponse(
+                        url=f"/{page}", status_code=status.HTTP_301_MOVED_PERMANENTLY
+                    )
+
+            for pageset in blocks.pages:
+                page = pageset[0]
+                if page != "":
+                    attach_page(page)
+
+            def load_deep_link(
+                deep_link: str, config: dict[str, Any], page: str | None = None
+            ):
+                components = config["components"]
+                try:
+                    user_path = Path("deep_links") / deep_link / "state.json"
+                    path = Path(
+                        routes_safe_join(
+                            DeveloperPath(app.uploaded_file_dir),
+                            UserProvidedPath(str(user_path)),
+                        )
+                    )
+                    if path.exists():
+                        components = orjson.loads(path.read_bytes())
+                        deep_link_state = "valid"
+                    else:
+                        deep_link_state = "invalid"
+                except (FileNotFoundError, OSError, orjson.JSONDecodeError):
+                    deep_link_state = "invalid"
+                    components = []
+                if page:
+                    components = [
+                        component
+                        for component in components
+                        if component["id"] in config["page"][page]["components"]
+                    ]
+                return components, deep_link_state
+
+            @app.head("/", response_class=HTMLResponse)
+            @app.get("/", response_class=HTMLResponse)
+            def main(
                 request: fastapi.Request,
                 user: str = Depends(get_current_user),
+                page: str = "",
                 deep_link: str = "",
             ):
-                return main(request, user, page, deep_link)
-
-            @app.get(f"/{page}/")
-            def page_redirect():
-                return RedirectResponse(
-                    url=f"/{page}", status_code=status.HTTP_301_MOVED_PERMANENTLY
-                )
-
-        for pageset in blocks.pages:
-            page = pageset[0]
-            if page != "":
-                attach_page(page)
-
-        def load_deep_link(
-            deep_link: str, config: dict[str, Any], page: str | None = None
-        ):
-            components = config["components"]
-            try:
-                user_path = Path("deep_links") / deep_link / "state.json"
-                path = Path(
-                    routes_safe_join(
-                        DeveloperPath(app.uploaded_file_dir),
-                        UserProvidedPath(str(user_path)),
-                    )
-                )
-                if path.exists():
-                    components = orjson.loads(path.read_bytes())
-                    deep_link_state = "valid"
-                else:
-                    deep_link_state = "invalid"
-            except (FileNotFoundError, OSError, orjson.JSONDecodeError):
-                deep_link_state = "invalid"
-                components = []
-            if page:
-                components = [
-                    component
-                    for component in components
-                    if component["id"] in config["page"][page]["components"]
-                ]
-            return components, deep_link_state
-
-        @app.head("/", response_class=HTMLResponse)
-        @app.get("/", response_class=HTMLResponse)
-        def main(
-            request: fastapi.Request,
-            user: str = Depends(get_current_user),
-            page: str = "",
-            deep_link: str = "",
-        ):
-            mimetypes.add_type("application/javascript", ".js")
-            blocks = app.get_blocks()
-            root = route_utils.get_root_url(
-                request=request,
-                route_path=f"/{page}",
-                root_path=app.root_path
-                or request.scope.get("root_path")
-                or blocks.custom_mount_path,
-            )
-            if (app.auth is None and app.auth_dependency is None) or user is not None:
-                config = utils.safe_deepcopy(blocks.config)
-                deep_link_state = "none"
-                components = [
-                    component
-                    for component in config["components"]
-                    if component["id"] in config["page"][page]["components"]
-                ]
-                if deep_link:
-                    components, deep_link_state = load_deep_link(
-                        deep_link,
-                        config,  # type: ignore
-                        page,
-                    )
-                config["username"] = user
-                config["deep_link_state"] = deep_link_state
-                config["components"] = components  # type: ignore
-                config["dependencies"] = [
-                    dependency
-                    for dependency in config.get("dependencies", [])
-                    if dependency["id"] in config["page"][page]["dependencies"]
-                ]
-                config["layout"] = config["page"][page]["layout"]
-                config["current_page"] = page
-                # Update root after loading the deep link state (if applicable)
-                # so that static files are served from the correct root
-                config = route_utils.update_root_in_config(config, root)
-            elif app.auth_dependency:
-                raise HTTPException(
-                    status_code=status.HTTP_401_UNAUTHORIZED,
-                    detail={
-                        "error": "Not authenticated",
-                        "auth_message": blocks.auth_message,
-                    },
-                )
-            else:
-                config = {
-                    "auth_required": True,
-                    "auth_message": blocks.auth_message,
-                    "space_id": blocks.space_id,
-                    "root": root,
-                    "page": {"": {"layout": {}}},
-                    "pages": [""],
-                    "components": [],
-                    "dependencies": [],
-                    "current_page": "",
-                }
-
-            try:
-                template = (
-                    "frontend/share.html" if blocks.share else "frontend/index.html"
-                )
-                gradio_api_info = api_info(request)
-                resp = templates.TemplateResponse(
+                mimetypes.add_type("application/javascript", ".js")
+                blocks = app.get_blocks()
+                root = route_utils.get_root_url(
                     request=request,
-                    name=template,
-                    context={
-                        "config": config,
-                        "gradio_api_info": gradio_api_info,
-                    },
+                    route_path=f"/{page}",
+                    root_path=app.root_path
+                    or request.scope.get("root_path")
+                    or blocks.custom_mount_path,
                 )
-                return resp
-            except TemplateNotFound as err:
-                if blocks.share:
-                    raise ValueError(
-                        "Did you install Gradio from source files? Share mode only "
-                        "works when Gradio is installed through the pip package."
-                    ) from err
+                if (app.auth is None and app.auth_dependency is None) or user is not None:
+                    config = utils.safe_deepcopy(blocks.config)
+                    deep_link_state = "none"
+                    components = [
+                        component
+                        for component in config["components"]
+                        if component["id"] in config["page"][page]["components"]
+                    ]
+                    if deep_link:
+                        components, deep_link_state = load_deep_link(
+                            deep_link,
+                            config,  # type: ignore
+                            page,
+                        )
+                    config["username"] = user
+                    config["deep_link_state"] = deep_link_state
+                    config["components"] = components  # type: ignore
+                    config["dependencies"] = [
+                        dependency
+                        for dependency in config.get("dependencies", [])
+                        if dependency["id"] in config["page"][page]["dependencies"]
+                    ]
+                    config["layout"] = config["page"][page]["layout"]
+                    config["current_page"] = page
+                    # Update root after loading the deep link state (if applicable)
+                    # so that static files are served from the correct root
+                    config = route_utils.update_root_in_config(config, root)
+                elif app.auth_dependency:
+                    raise HTTPException(
+                        status_code=status.HTTP_401_UNAUTHORIZED,
+                        detail={
+                            "error": "Not authenticated",
+                            "auth_message": blocks.auth_message,
+                        },
+                    )
                 else:
-                    raise ValueError(
-                        "Did you install Gradio from source files? You need to build "
-                        "the frontend by running /scripts/build_frontend.sh"
-                    ) from err
+                    config = {
+                        "auth_required": True,
+                        "auth_message": blocks.auth_message,
+                        "space_id": blocks.space_id,
+                        "root": root,
+                        "page": {"": {"layout": {}}},
+                        "pages": [""],
+                        "components": [],
+                        "dependencies": [],
+                        "current_page": "",
+                    }
+
+                try:
+                    template = (
+                        "frontend/share.html" if blocks.share else "frontend/index.html"
+                    )
+                    gradio_api_info = api_info(request)
+                    resp = templates.TemplateResponse(
+                        request=request,
+                        name=template,
+                        context={
+                            "config": config,
+                            "gradio_api_info": gradio_api_info,
+                        },
+                    )
+                    return resp
+                except TemplateNotFound as err:
+                    if blocks.share:
+                        raise ValueError(
+                            "Did you install Gradio from source files? Share mode only "
+                            "works when Gradio is installed through the pip package."
+                        ) from err
+                    else:
+                        raise ValueError(
+                            "Did you install Gradio from source files? You need to build "
+                            "the frontend by running /scripts/build_frontend.sh"
+                        ) from err
 
         @app.get("/gradio_api/deep_link")
         def deep_link(session_hash: str):

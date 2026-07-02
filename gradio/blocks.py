@@ -2655,6 +2655,8 @@ Received inputs:
         js: str | Literal[True] | None = None,
         head: str | None = None,
         head_paths: str | Path | Sequence[str | Path] | None = None,
+        custom_frontend: str | Path | None = None,
+        spa: bool = False,
     ) -> tuple[App, str, str]:
         """
         Launches a simple web server that serves the demo. Can also be used to create a
@@ -2703,6 +2705,18 @@ Received inputs:
             js: Custom js as a code string. The js code will automatically be executed when the page loads. For more flexibility, use the head parameter to insert js inside <script> tags.
             head: Custom html code to insert into the head of the demo webpage. This can be used to add custom meta tags, multiple scripts, stylesheets, etc. to the page.
             head_paths: Custom html code as a pathlib.Path to a html file or a list of such paths. This html files will be read, concatenated, and included in the head of the demo webpage. If the `head` parameter is also set, the html from `head` will be included first.
+            custom_frontend: Path to a directory containing a custom web app
+                (index.html, JS bundles, CSS, images, etc.) to serve at the
+                root ``/`` instead of the default Gradio UI.  All Gradio API
+                endpoints (``/gradio_api/*``) remain fully operational so your
+                custom frontend can call predict, upload, stream, etc.
+                This enables using Gradio purely as a backend API server while
+                your own static site or fullstack app (React, Vue, Svelte, etc.)
+                provides the user-facing interface.
+            spa: When ``custom_frontend`` is set and this is ``True``, any
+                path that does not match a real file falls back to serving
+                ``index.html`` — enabling client-side routers (React Router,
+                Vue Router, etc.).
         Returns:
             app: FastAPI app object that is running the demo
             local_url: Locally accessible link to the demo
@@ -2930,6 +2944,8 @@ Received inputs:
             strict_cors=strict_cors,
             mcp_server=mcp_server,
             debug=debug,
+            custom_frontend=custom_frontend,
+            spa=spa,
         )
         if self.mcp_error and not quiet:
             print(self.mcp_error)
