@@ -5,15 +5,12 @@ The custom_frontend directory contains a plain HTML/CSS/JS website
 that calls the Gradio backend API (/gradio_api/*) directly.
 No Gradio UI is rendered — only the custom static site is shown.
 
-Run:
+Run (after cloning and installing):
+    pip install -e .
     python demo/custom_frontend_static/run.py
 """
 
-import sys
 import os
-
-# Make sure we use the local gradio from this repo
-sys.path.insert(0, os.path.join(os.path.dirname(__file__), "../.."))
 
 import gradio as gr
 

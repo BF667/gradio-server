@@ -15,15 +15,12 @@ This shows THREE integration patterns in one app:
 The `spa=True` flag enables client-side routing (hash-based) so that
 navigating to /#/tasks, /#/ai, etc. all serve index.html.
 
-Run:
+Run (after cloning and installing):
+    pip install -e .
     python demo/custom_frontend_fullstack/run.py
 """
 
-import sys
 import os
-
-# Make sure we use the local gradio from this repo
-sys.path.insert(0, os.path.join(os.path.dirname(__file__), "../.."))
 
 import gradio as gr
 from gradio import Server
