@@ -590,6 +590,22 @@ class App(FastAPI):
         if _custom_frontend_dir is not None:
             from starlette.staticfiles import StaticFiles
 
+            # Allowed file extensions for static serving.
+            # When custom_frontend points at the project root (e.g. "."),
+            # this prevents exposing Python source, env files, etc.
+            _SAFE_EXTENSIONS = frozenset({
+                ".html", ".htm", ".css", ".js", ".mjs", ".cjs",
+                ".json", ".jsonld", ".xml", ".svg", ".map",
+                ".png", ".jpg", ".jpeg", ".gif", ".webp", ".ico",
+                ".avif", ".bmp", ".tiff", ".tif",
+                ".woff", ".woff2", ".ttf", ".otf", ".eot",
+                ".mp4", ".webm", ".ogg", ".mp3", ".wav", ".flac",
+                ".pdf", ".wasm",
+                ".txt", ".csv", ".md", ".webmanifest", ".manifest",
+                ".glb", ".gltf", ".obj", ".fbx", ".stl",
+                ".zip", ".gz", ".tar", ".rar", ".7z",
+            })
+
             # Serve every file under the custom directory via a catch-all
             # so that JS bundles, images, CSS, etc. are all accessible.
             app.mount("/__custom__", StaticFiles(directory=str(_custom_frontend_dir)), name="custom_frontend_assets")
@@ -638,6 +654,12 @@ class App(FastAPI):
                     raise HTTPException(status_code=403, detail="Access denied")
 
                 if requested_file.is_file():
+                    # Only serve files with safe web asset extensions.
+                    # This lets users point custom_frontend at the project
+                    # root (e.g. ".") without exposing .py, .env, .git, etc.
+                    ext = requested_file.suffix.lower()
+                    if ext not in _SAFE_EXTENSIONS:
+                        raise HTTPException(status_code=404)
                     content_type, _ = mimetypes.guess_type(str(requested_file))
                     return Response(
                         content=requested_file.read_bytes(),

@@ -1,9 +1,9 @@
 """
 Demo: Static HTML client with Gradio as a pure backend API server.
 
-The custom_frontend directory contains a plain HTML/CSS/JS website
-that calls the Gradio backend API (/gradio_api/*) directly.
-No Gradio UI is rendered — only the custom static site is shown.
+index.html lives RIGHT NEXT TO this run.py — no separate frontend folder needed.
+The _SAFE_EXTENSIONS filter in routes.py ensures .py, .env, .git files
+can never be served over HTTP, so it's safe to point custom_frontend at ".".
 
 Run (after cloning and installing):
     pip install -e .
@@ -33,9 +33,11 @@ def echo(message: str) -> str:
 
 
 if __name__ == "__main__":
-    frontend_dir = os.path.join(os.path.dirname(__file__))
+    # Serve from the same directory as this script — index.html, style.css,
+    # app.js etc. can all live right here alongside run.py.
+    # "." resolves relative to CWD, so we use __file__ to be explicit.
     server.launch(
-        custom_frontend=frontend_dir,
+        custom_frontend=os.path.dirname(os.path.abspath(__file__)),
         server_name="0.0.0.0",
         server_port=7860,
         _frontend=False,

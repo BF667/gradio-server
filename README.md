@@ -198,30 +198,35 @@ python demo/custom_frontend_fullstack/run.py
 ## Project Structure
 
 ```
-gradio-server/
-├── gradio/
-│   ├── routes.py          # Core: custom_frontend static serving + SPA fallback
-│   ├── server.py          # Server class with @server.api() decorator
-│   ├── blocks.py          # Blocks.launch() passes custom_frontend/spa through
-│   └── ...
-├── demo/
-│   ├── custom_frontend_static/
-│   │   ├── run.py         # Backend: Server() + @server.api()
-│   │   └── index.html     # Frontend: plain HTML/CSS/JS
-│   └── custom_frontend_fullstack/
-│       ├── run.py         # Backend: Server() + FastAPI routes + @server.api()
-│       └── static/
-│           └── index.html # Frontend: SPA with hash routing
-├── requirements.txt       # Python dependencies (auto-installed by pip install -e .)
-├── pyproject.toml         # Package config
-└── README.md
+my-app/                    # Your project — flat layout, no separate frontend folder
+├── run.py                 # Backend: Server() + @server.api() + FastAPI routes
+├── index.html             # Frontend: served at /
+├── app.js                 # Frontend: your JS
+├── style.css              # Frontend: your CSS
+├── assets/
+│   └── logo.png           # Frontend: images, fonts, etc.
+└── requirements.txt       # (optional) your app's extra deps
+```
+
+index.html lives **right next to** run.py. The `_SAFE_EXTENSIONS` filter in routes.py blocks `.py`, `.env`, `.git`, and other non-web files from being served, so it's safe to point `custom_frontend` at the same directory.
+
+Demo examples in this repo follow the same flat layout:
+
+```
+demo/custom_frontend_static/
+├── run.py         # Backend
+└── index.html     # Frontend
+
+demo/custom_frontend_fullstack/
+├── run.py         # Backend
+└── index.html     # Frontend
 ```
 
 ---
 
 ## Using with React / Vue / Svelte / Next.js
 
-Build your frontend app normally, then point `custom_frontend` at the build output:
+Build your frontend app normally, then point `custom_frontend` at the build output directory:
 
 ```bash
 # React example
@@ -230,8 +235,19 @@ npm run build
 # output is in dist/
 
 # In your Gradio backend:
-server.launch(custom_frontend="../my-react-app/dist/", spa=True)
+server.launch(custom_frontend="../my-react-app/dist", spa=True)
 ```
+
+Or keep it flat — put your frontend files in the same folder as `run.py`:
+
+```
+my-app/
+├── run.py        # server.launch(custom_frontend=os.path.dirname(os.path.abspath(__file__)))
+├── index.html
+└── bundle.js
+```
+
+Since only safe web extensions (.html, .js, .css, .png, etc.) are served, your `.py` files are never exposed.
 
 For **React Router** or **Vue Router** (history mode), set `spa=True` so that all routes fall back to `index.html`.
 
@@ -275,6 +291,7 @@ def ai_chat(message: str) -> str:
 
 ## Security
 
+- **Safe extension filter**: Only web asset files are served (.html, .js, .css, .png, .jpg, .svg, .woff, .json, .wasm, etc.). Files like `.py`, `.env`, `.git`, `.toml`, `.cfg` are blocked with 404. This means you can safely point `custom_frontend` at your project root.
 - **Path traversal protection**: The custom frontend catchall route rejects paths containing `..`, prevents access outside the frontend directory, and blocks internal Gradio routes.
 - **Internal route guards**: Paths starting with `api`, `docs`, `redoc`, `openapi` are excluded from the SPA fallback to prevent conflicts with FastAPI's built-in routes.
 - **CORS**: Use `strict_cors=False` in `launch()` if your frontend is served from a different origin during development.

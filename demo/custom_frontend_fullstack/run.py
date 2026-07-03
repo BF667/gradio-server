@@ -102,12 +102,11 @@ def ai_chat(message: str) -> str:
     return f"You said: {message}. This response was processed through Gradio's queue with SSE streaming!"
 
 
-# ── Launch with the custom frontend ──────────────────────────────
+# ── Launch — index.html lives right next to this file ────────────
 
 if __name__ == "__main__":
-    frontend_dir = os.path.join(os.path.dirname(__file__), "static")
     server.launch(
-        custom_frontend=frontend_dir,
+        custom_frontend=os.path.dirname(os.path.abspath(__file__)),
         spa=True,  # Enable SPA routing for hash-based navigation
         server_name="0.0.0.0",
         server_port=7860,
